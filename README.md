@@ -7,6 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
   <style>
     :root{
       --bg:#0f1724; /* deep slate */
@@ -87,9 +90,8 @@
     .modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer}
     .modal-close:hover{color:#e6eef8}
     
-    /* User identification */
-    .user-id{display:flex;align-items:center;gap:8px;margin-top:10px}
-    .user-badge{background:var(--glass);padding:4px 8px;border-radius:6px;font-size:12px}
+    /* Loading state */
+    .loading{text-align:center;padding:20px;color:var(--muted)}
   </style>
 </head>
 <body>
@@ -122,8 +124,8 @@
 
         <div class="grid" style="margin-top:22px">
           <div class="card">
-            <strong>Simple & Clean</strong>
-            <div class="muted">Focus on your words without distractions.</div>
+            <strong>Real-time Updates</strong>
+            <div class="muted">See posts from other users instantly.</div>
           </div>
           <div class="card">
             <strong>Anonymous</strong>
@@ -134,18 +136,13 @@
             <div class="muted">Share and discover thoughts from others.</div>
           </div>
         </div>
-        
-        <div class="user-id">
-          <div class="muted">Your ID:</div>
-          <div class="user-badge" id="userIdDisplay">Loading...</div>
-        </div>
       </section>
 
       <aside class="profile">
         <div class="avatar">TS</div>
         <div style="text-align:center">
           <div style="font-weight:700">TextShare</div>
-          <div class="muted">A platform for text sharing</div>
+          <div class="muted">Powered by Firebase</div>
         </div>
 
         <div class="meta">
@@ -159,7 +156,7 @@
       <div class="hero-card">
         <h2>Recent Posts</h2>
         <div class="posts-container" id="postsContainer">
-          <!-- Posts will be dynamically inserted here -->
+          <div class="loading">Loading posts...</div>
         </div>
       </div>
     </section>
@@ -168,7 +165,7 @@
       <div class="hero-card">
         <h2>About TextShare</h2>
         <p class="muted">TextShare is a minimalist platform for sharing text-based content. Post your thoughts, stories, ideas, or anything else you'd like to share with others. All posts are public and can be viewed by anyone visiting the site.</p>
-        <p class="muted">Each user is assigned a unique ID that allows the platform to track your likes and ensure you can only like each post once.</p>
+        <p class="muted">Powered by Firebase for real-time updates across all users.</p>
       </div>
     </section>
 
@@ -196,37 +193,28 @@
   </div>
 
   <script>
-    // Generate a unique user ID if one doesn't exist
+    // === REPLACE WITH YOUR FIREBASE CONFIG ===
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "YOUR_APP_ID"
+    };
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Generate a unique user ID
     function getUserId() {
       let userId = localStorage.getItem('textshare_user_id');
       if (!userId) {
-        // Generate a simple but unique ID
         userId = 'user_' + Math.random().toString(36).substr(2, 9);
         localStorage.setItem('textshare_user_id', userId);
       }
       return userId;
-    }
-
-    // Get posts from localStorage or initialize empty array
-    function getPosts() {
-      const postsJson = localStorage.getItem('textshare_posts');
-      return postsJson ? JSON.parse(postsJson) : [];
-    }
-
-    // Save posts to localStorage
-    function savePosts(posts) {
-      localStorage.setItem('textshare_posts', JSON.stringify(posts));
-    }
-
-    // Get likes data from localStorage
-    function getLikes() {
-      const likesJson = localStorage.getItem('textshare_likes');
-      return likesJson ? JSON.parse(likesJson) : {};
-    }
-
-    // Save likes data to localStorage
-    function saveLikes(likes) {
-      localStorage.setItem('textshare_likes', JSON.stringify(likes));
     }
 
     // DOM elements
@@ -242,16 +230,32 @@
     const viewPostsBtn = document.getElementById('viewPostsBtn');
     const postCount = document.getElementById('postCount');
     const userCount = document.getElementById('userCount');
-    const userIdDisplay = document.getElementById('userIdDisplay');
+
+    let posts = [];
+    let likes = {};
 
     // Initialize the app
     function init() {
       const userId = getUserId();
-      userIdDisplay.textContent = userId.substring(0, 8) + '...';
       
-      renderPosts();
-      updateStats();
-      
+      // Set up real-time listener for posts
+      db.collection('posts')
+        .orderBy('timestamp', 'desc')
+        .onSnapshot((snapshot) => {
+          posts = [];
+          snapshot.forEach(doc => {
+            posts.push({ id: doc.id, ...doc.data() });
+          });
+          renderPosts();
+          updateStats();
+        });
+
+      // Set up real-time listener for likes
+      db.collection('likes').doc('global')
+        .onSnapshot((doc) => {
+          likes = doc.exists ? doc.data() : {};
+        });
+
       // Event listeners
       postBtn.addEventListener('click', openPostModal);
       startPostingBtn.addEventListener('click', openPostModal);
@@ -272,8 +276,6 @@
 
     // Render all posts
     function renderPosts() {
-      const posts = getPosts();
-      const likes = getLikes();
       const userId = getUserId();
       
       postsContainer.innerHTML = '';
@@ -283,10 +285,7 @@
         return;
       }
       
-      // Sort posts by timestamp (newest first)
-      const sortedPosts = [...posts].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      
-      sortedPosts.forEach(post => {
+      posts.forEach(post => {
         // Check if current user has liked this post
         const userLiked = likes[post.id] && likes[post.id].includes(userId);
         const postElement = createPostElement(post, userLiked);
@@ -313,9 +312,9 @@
         </div>
         <div class="post-content">${post.content}</div>
         <div class="post-actions">
-          <div class="post-action ${userLiked ? 'liked' : ''}" onclick="likePost(${post.id})">
+          <div class="post-action ${userLiked ? 'liked' : ''}" onclick="likePost('${post.id}')">
             <span>❤️</span>
-            <span>${post.likes}</span>
+            <span>${post.likes || 0}</span>
           </div>
         </div>
       `;
@@ -324,7 +323,7 @@
     }
 
     // Handle post submission
-    function handlePostSubmit(e) {
+    async function handlePostSubmit(e) {
       e.preventDefault();
       
       const content = postContent.value.trim();
@@ -332,35 +331,27 @@
       
       if (!content) return;
       
-      const posts = getPosts();
       const newPost = {
-        id: Date.now(), // Simple ID generation
         author: author || null,
         content: content,
-        timestamp: new Date().toISOString(),
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         likes: 0
       };
       
-      posts.unshift(newPost);
-      savePosts(posts);
-      renderPosts();
-      updateStats();
-      closePostModal();
-      postForm.reset();
-      updateCharCount();
-      
-      // Scroll to the new post
-      document.getElementById('posts').scrollIntoView({behavior: 'smooth'});
+      try {
+        await db.collection('posts').add(newPost);
+        closePostModal();
+        postForm.reset();
+        updateCharCount();
+      } catch (error) {
+        console.error('Error adding post:', error);
+        alert('Error posting. Please try again.');
+      }
     }
 
     // Like a post
-    function likePost(postId) {
-      const posts = getPosts();
-      const likes = getLikes();
+    async function likePost(postId) {
       const userId = getUserId();
-      
-      const post = posts.find(p => p.id === postId);
-      if (!post) return;
       
       // Initialize likes array for this post if it doesn't exist
       if (!likes[postId]) {
@@ -370,19 +361,27 @@
       // Check if user already liked this post
       const userLiked = likes[postId].includes(userId);
       
-      if (userLiked) {
-        // Unlike the post
-        post.likes -= 1;
-        likes[postId] = likes[postId].filter(id => id !== userId);
-      } else {
-        // Like the post
-        post.likes += 1;
-        likes[postId].push(userId);
+      try {
+        if (userLiked) {
+          // Unlike the post
+          await db.collection('posts').doc(postId).update({
+            likes: firebase.firestore.FieldValue.increment(-1)
+          });
+          likes[postId] = likes[postId].filter(id => id !== userId);
+        } else {
+          // Like the post
+          await db.collection('posts').doc(postId).update({
+            likes: firebase.firestore.FieldValue.increment(1)
+          });
+          likes[postId].push(userId);
+        }
+        
+        // Update likes in Firestore
+        await db.collection('likes').doc('global').set(likes);
+        
+      } catch (error) {
+        console.error('Error updating likes:', error);
       }
-      
-      savePosts(posts);
-      saveLikes(likes);
-      renderPosts();
     }
 
     // Open post modal
@@ -403,8 +402,10 @@
 
     // Calculate time ago
     function getTimeAgo(timestamp) {
+      if (!timestamp) return 'Recently';
+      
       const now = new Date();
-      const postTime = new Date(timestamp);
+      const postTime = timestamp.toDate();
       const diffMs = now - postTime;
       const diffMins = Math.floor(diffMs / 60000);
       const diffHours = Math.floor(diffMs / 3600000);
@@ -418,7 +419,6 @@
 
     // Update statistics
     function updateStats() {
-      const posts = getPosts();
       postCount.textContent = posts.length;
       
       // Count unique authors
